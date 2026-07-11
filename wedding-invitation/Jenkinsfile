@@ -5,7 +5,7 @@ pipeline {
     environment {
         APP_NAME = "wedding-invitation"
         USERNAME = "ubuntu"
-        SERVER_IP = credentials('maven-server-ip')
+        SERVER_IP = credentials('13.207.186.219')
     }
 
     stages {
