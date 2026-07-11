@@ -4,7 +4,7 @@ pipeline {
 
     environment {
         APP_NAME = "wedding-invitation"
-        SERVER_IP = "13.207.186.219"
+        SERVER_IP = "13.127.249.241"
     }
 
     stages {
