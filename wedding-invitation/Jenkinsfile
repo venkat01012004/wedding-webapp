@@ -1,0 +1,97 @@
+pipeline {
+    agent any
+
+    environment {
+        APP_NAME         = 'wedding-invitation'
+        WAR_FILE         = "target/${APP_NAME}.war"
+        REMOTE_WEBAPPS   = '/opt/tomcat/webapps'
+        // Configure these in Manage Jenkins > Credentials
+        EC2_SSH_CRED_ID  = 'ec2-ssh-key'   // SSH Username with private key
+        EC2_HOST_CRED_ID = 'ec2-host'      // Secret text, e.g. ec2-user@1.2.3.4
+    }
+
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                echo 'Checking out source from GitHub...'
+                checkout scm
+            }
+        }
+
+        stage('Build') {
+            steps {
+                echo 'Building with Maven...'
+                sh 'mvn -B clean compile'
+            }
+        }
+
+        stage('Test') {
+            steps {
+                echo 'Running unit tests...'
+                sh 'mvn -B test'
+            }
+            post {
+                always {
+                    junit testResults: 'target/surefire-reports/*.xml', allowEmptyResults: true
+                }
+            }
+        }
+
+        stage('Package') {
+            steps {
+                echo 'Packaging WAR file...'
+                sh 'mvn -B package -DskipTests'
+                archiveArtifacts artifacts: "${WAR_FILE}", fingerprint: true
+            }
+        }
+
+        stage('Deploy to EC2') {
+            when {
+                branch 'main'
+            }
+            steps {
+                echo 'Deploying WAR to EC2 Tomcat instance...'
+                withCredentials([
+                    sshUserPrivateKey(credentialsId: "${EC2_SSH_CRED_ID}", keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER'),
+                    string(credentialsId: "${EC2_HOST_CRED_ID}", variable: 'EC2_TARGET')
+                ]) {
+                    sh """
+                        set -e
+                        SSH_OPTS="-i \$SSH_KEY -o StrictHostKeyChecking=no"
+
+                        echo "Copying WAR to EC2..."
+                        scp \$SSH_OPTS ${WAR_FILE} \$EC2_TARGET:/tmp/${APP_NAME}.war
+
+                        echo "Deploying on remote Tomcat..."
+                        ssh \$SSH_OPTS \$EC2_TARGET '
+                            sudo systemctl stop tomcat || true
+                            sudo rm -rf ${REMOTE_WEBAPPS}/${APP_NAME}
+                            sudo rm -f ${REMOTE_WEBAPPS}/${APP_NAME}.war
+                            sudo cp /tmp/${APP_NAME}.war ${REMOTE_WEBAPPS}/${APP_NAME}.war
+                            rm -f /tmp/${APP_NAME}.war
+                            sudo systemctl start tomcat
+                        '
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Build #${env.BUILD_NUMBER} succeeded and deployed successfully."
+        }
+        failure {
+            echo "Build #${env.BUILD_NUMBER} failed. Check console output above."
+        }
+        always {
+            cleanWs()
+        }
+    }
+}
